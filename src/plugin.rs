@@ -6,7 +6,7 @@ use crate::{
 };
 use bevy::ecs::system::SystemState;
 use bevy::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 // use bevy::app::FixedPreUpdate;
 use bevy::ecs::intern::Interned;
 use bevy::ecs::schedule::{ScheduleLabel, SystemSet};
@@ -477,7 +477,6 @@ fn tick_timeout_components(
 #[derive(Component, Debug, Clone)]
 pub struct BehaveInterrupt {
     triggers: Vec<DynamicTrigger>,
-    checked_this_frame: bool,
 }
 
 impl BehaveInterrupt {
@@ -486,12 +485,11 @@ impl BehaveInterrupt {
     pub fn new<T: Clone + Send + Sync + 'static>(trigger: T) -> Self {
         Self {
             triggers: vec![DynamicTrigger::new(trigger)],
-            checked_this_frame: false,
         }
     }
 
     /// Adds another trigger to check. If any trigger reports success, the interrupted node will report success.
-    pub fn and<T: Clone + Send + Sync + 'static>(mut self, trigger: T) -> Self {
+    pub fn or<T: Clone + Send + Sync + 'static>(mut self, trigger: T) -> Self {
         self.triggers.push(DynamicTrigger::new(trigger));
         self
     }
@@ -501,22 +499,21 @@ impl BehaveInterrupt {
 struct InterruptState {
     /// Maps temp entities to their original contexts for cleanup
     pending_interrupts: HashMap<Entity, BehaveCtx>,
+    /// Entities that have been processed this frame (cleared each frame)
+    processed_this_frame: HashSet<Entity>,
 }
 
 fn tick_interrupt_components(
-    mut q: Query<(&mut BehaveInterrupt, &BehaveCtx)>,
+    q: Query<(Entity, &BehaveInterrupt, &BehaveCtx)>,
     mut interrupt_state: ResMut<InterruptState>,
     mut commands: Commands,
 ) {
-    // Reset all checked flags at start of frame
-    for (mut interrupt, _) in q.iter_mut() {
-        interrupt.checked_this_frame = false;
-    }
+    // Clear the processed set at the start of each frame
+    interrupt_state.processed_this_frame.clear();
 
-    for (mut interrupt, ctx) in q.iter_mut() {
-        if !interrupt.checked_this_frame {
-            interrupt.checked_this_frame = true;
-
+    for (entity, interrupt, ctx) in q.iter() {
+        // Only process each interrupt entity once per frame
+        if interrupt_state.processed_this_frame.insert(entity) {
             // Check each trigger
             for trigger in &interrupt.triggers {
                 // Create a unique temporary entity to track this interrupt check
@@ -561,6 +558,5 @@ fn handle_interrupt_responses(
         if matches!(trigger.event(), BehaveStatusReport::Success(_)) {
             commands.trigger(original_ctx.success());
         }
-        // If the trigger failed, we just clean up and don't interrupt the main behavior
     }
 }

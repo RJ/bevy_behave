@@ -470,28 +470,28 @@ fn test_behave_interrupt_multiple() {
     app.add_plugins(BehavePlugin::default());
     app.add_plugins(bevy::log::LogPlugin::default());
     app.init_resource::<TestState>();
-    
+
     app.add_observer(check_health);
     app.add_observer(check_enemy_in_range_multi);
     app.add_observer(on_task_finished_multi);
-    
+
     app.add_systems(
         Startup,
         |mut commands: Commands, mut test_state: ResMut<TestState>| {
             // Set low health to trigger interrupt
             test_state.low_health = true;
             test_state.enemy_in_range = false; // This one should not trigger
-            
+
             let tree = behave! {
                 Behave::spawn_named("Long task with multiple interrupts", (
                     LongRunningTask,
-                    BehaveInterrupt::new(CheckHealth).with_trigger(CheckEnemyInRange),
+                    BehaveInterrupt::new(CheckHealth).or(CheckEnemyInRange),
                 ))
             };
-            
+
             commands.spawn(BehaveTree::new(tree).with_logging(true));
         },
     );
-    
+
     app.run();
 }
