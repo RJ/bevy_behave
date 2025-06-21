@@ -473,10 +473,10 @@ fn tick_timeout_components(
     }
 }
 
-/// Will interrupt and report success if the trigger reports success
+/// Will interrupt and report success if any trigger reports success
 #[derive(Component, Debug, Clone)]
 pub struct BehaveInterrupt {
-    trigger: DynamicTrigger,
+    triggers: Vec<DynamicTrigger>,
     checked_this_frame: bool,
 }
 
@@ -485,16 +485,22 @@ impl BehaveInterrupt {
     /// If the trigger reports success, the interrupted node will report success.
     pub fn new<T: Clone + Send + Sync + 'static>(trigger: T) -> Self {
         Self {
-            trigger: DynamicTrigger::new(trigger),
+            triggers: vec![DynamicTrigger::new(trigger)],
             checked_this_frame: false,
         }
+    }
+
+    /// Adds another trigger to check. If any trigger reports success, the interrupted node will report success.
+    pub fn and<T: Clone + Send + Sync + 'static>(mut self, trigger: T) -> Self {
+        self.triggers.push(DynamicTrigger::new(trigger));
+        self
     }
 }
 
 #[derive(Resource, Default)]
 struct InterruptState {
-    /// Maps behavior tree entities to their interrupt temp entities and contexts
-    pending_interrupts: HashMap<Entity, (Entity, BehaveCtx)>,
+    /// Maps temp entities to their original contexts for cleanup
+    pending_interrupts: HashMap<Entity, BehaveCtx>,
 }
 
 fn tick_interrupt_components(
@@ -511,27 +517,28 @@ fn tick_interrupt_components(
         if !interrupt.checked_this_frame {
             interrupt.checked_this_frame = true;
 
-            // Create a unique temporary entity to track this interrupt check
-            let temp_entity = commands.spawn_empty().id();
+            // Check each trigger
+            for trigger in &interrupt.triggers {
+                // Create a unique temporary entity to track this interrupt check
+                let temp_entity = commands.spawn_empty().id();
 
-            // Store the mapping using bt_entity as key
-            interrupt_state
-                .pending_interrupts
-                .insert(ctx.behave_entity(), (temp_entity, *ctx));
+                // Store the mapping for cleanup
+                interrupt_state.pending_interrupts.insert(temp_entity, *ctx);
 
-            // Create a context for the interrupt trigger as a proper trigger context
-            let interrupt_ctx = BehaveCtx::new_for_trigger(
-                ctx.task_node(),
-                &TickCtx {
-                    bt_entity: temp_entity, // Use temp entity as the "tree" for this interrupt check
-                    target_entity: ctx.target_entity(),
-                    supervisor_entity: ctx.supervisor_entity(),
-                    elapsed_secs: 0.0, // Not used for immediate triggers
-                    logging: false,
-                },
-            );
+                // Create a context for the interrupt trigger as a proper trigger context
+                let interrupt_ctx = BehaveCtx::new_for_trigger(
+                    ctx.task_node(),
+                    &TickCtx {
+                        bt_entity: temp_entity, // Use temp entity as the "tree" for this interrupt check
+                        target_entity: ctx.target_entity(),
+                        supervisor_entity: ctx.supervisor_entity(),
+                        elapsed_secs: 0.0, // Not used for immediate triggers
+                        logging: false,
+                    },
+                );
 
-            commands.dyn_trigger(interrupt.trigger.clone(), interrupt_ctx);
+                commands.dyn_trigger(trigger.clone(), interrupt_ctx);
+            }
         }
     }
 }
@@ -545,27 +552,15 @@ fn handle_interrupt_responses(
     let response_ctx = trigger.event().ctx();
     let temp_entity = response_ctx.behave_entity(); // This is the temp entity we used as bt_entity
 
-    // Find the interrupt that used this temp entity
-    let mut found_bt_entity = None;
-    for (bt_entity, (stored_temp_entity, _)) in interrupt_state.pending_interrupts.iter() {
-        if *stored_temp_entity == temp_entity {
-            found_bt_entity = Some(*bt_entity);
-            break;
-        }
-    }
+    // Check if this response is for one of our pending interrupts
+    if let Some(original_ctx) = interrupt_state.pending_interrupts.remove(&temp_entity) {
+        // Clean up the temporary entity
+        commands.entity(temp_entity).despawn();
 
-    if let Some(bt_entity) = found_bt_entity {
-        if let Some((temp_entity, original_ctx)) =
-            interrupt_state.pending_interrupts.remove(&bt_entity)
-        {
-            // Clean up the temporary entity
-            commands.entity(temp_entity).despawn();
-
-            // Only interrupt the main behavior if the trigger reported success
-            if matches!(trigger.event(), BehaveStatusReport::Success(_)) {
-                commands.trigger(original_ctx.success());
-            }
-            // If the trigger failed, we just clean up and don't interrupt the main behavior
+        // Only interrupt the main behavior if the trigger reported success
+        if matches!(trigger.event(), BehaveStatusReport::Success(_)) {
+            commands.trigger(original_ctx.success());
         }
+        // If the trigger failed, we just clean up and don't interrupt the main behavior
     }
 }

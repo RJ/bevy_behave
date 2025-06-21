@@ -406,3 +406,92 @@ fn assert_tree(s: &str, tree: Tree<Behave>) {
     expected.push('\n');
     assert_eq!(tree.to_string(), expected);
 }
+
+/// Test BehaveInterrupt with multiple triggers
+#[test]
+fn test_behave_interrupt_multiple() {
+    use crate::prelude::*;
+    use bevy::prelude::*;
+
+    #[derive(Component, Clone)]
+    struct LongRunningTask;
+
+    #[derive(Clone)]
+    struct CheckHealth;
+
+    #[derive(Clone)]
+    struct CheckEnemyInRange;
+
+    #[derive(Resource, Default)]
+    struct TestState {
+        low_health: bool,
+        enemy_in_range: bool,
+        task_interrupted: bool,
+    }
+
+    fn check_health(
+        trigger: Trigger<BehaveTrigger<CheckHealth>>,
+        test_state: Res<TestState>,
+        mut commands: Commands,
+    ) {
+        info!("Checking health: low={}", test_state.low_health);
+        if test_state.low_health {
+            commands.trigger(trigger.ctx().success());
+        } else {
+            commands.trigger(trigger.ctx().failure());
+        }
+    }
+
+    fn check_enemy_in_range_multi(
+        trigger: Trigger<BehaveTrigger<CheckEnemyInRange>>,
+        test_state: Res<TestState>,
+        mut commands: Commands,
+    ) {
+        info!("Checking for enemy in range: {}", test_state.enemy_in_range);
+        if test_state.enemy_in_range {
+            commands.trigger(trigger.ctx().success());
+        } else {
+            commands.trigger(trigger.ctx().failure());
+        }
+    }
+
+    fn on_task_finished_multi(
+        _trigger: Trigger<OnAdd, BehaveFinished>,
+        mut test_state: ResMut<TestState>,
+        mut exit: EventWriter<AppExit>,
+    ) {
+        test_state.task_interrupted = true;
+        info!("Task was interrupted successfully!");
+        exit.write(AppExit::Success);
+    }
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(BehavePlugin::default());
+    app.add_plugins(bevy::log::LogPlugin::default());
+    app.init_resource::<TestState>();
+    
+    app.add_observer(check_health);
+    app.add_observer(check_enemy_in_range_multi);
+    app.add_observer(on_task_finished_multi);
+    
+    app.add_systems(
+        Startup,
+        |mut commands: Commands, mut test_state: ResMut<TestState>| {
+            // Set low health to trigger interrupt
+            test_state.low_health = true;
+            test_state.enemy_in_range = false; // This one should not trigger
+            
+            let tree = behave! {
+                Behave::spawn_named("Long task with multiple interrupts", (
+                    LongRunningTask,
+                    BehaveInterrupt::new(CheckHealth).with_trigger(CheckEnemyInRange),
+                ))
+            };
+            
+            commands.spawn(BehaveTree::new(tree).with_logging(true));
+        },
+    );
+    
+    app.run();
+}
