@@ -312,7 +312,7 @@ fn run_frame_delays(sync: bool, expected_final_frame: u32) {
     app.run();
 }
 
-/// Test BehaveInterrupt
+/// Test that BehaveInterrupt works as expected
 #[test]
 fn test_behave_interrupt() {
     use crate::prelude::*;
@@ -360,51 +360,25 @@ fn test_behave_interrupt() {
     app.add_plugins(BehavePlugin::default());
     app.add_plugins(bevy::log::LogPlugin::default());
     app.init_resource::<TestState>();
-
+    
     app.add_observer(check_enemy_in_range);
     app.add_observer(on_task_finished);
-
-    app.add_systems(
-        Startup,
-        |mut commands: Commands, mut test_state: ResMut<TestState>| {
-            // Set enemy in range after a few frames
-            test_state.enemy_in_range = true;
-
-            let tree = behave! {
-                Behave::spawn_named("Long task with interrupt", (
-                    LongRunningTask,
-                    BehaveInterrupt::new(CheckHasEnemyInRange),
-                ))
-            };
-
-            commands.spawn(BehaveTree::new(tree).with_logging(true));
-        },
-    );
-
+    
+    app.add_systems(Startup, |mut commands: Commands, mut test_state: ResMut<TestState>| {
+        // Set enemy in range after a few frames
+        test_state.enemy_in_range = true;
+        
+        let tree = behave! {
+            Behave::spawn_named("Long task with interrupt", (
+                LongRunningTask,
+                BehaveInterrupt::new(CheckHasEnemyInRange),
+            ))
+        };
+        
+        commands.spawn(BehaveTree::new(tree).with_logging(true));
+    });
+    
     app.run();
-}
-
-/// asserts the tree.to_string matches the expected string, accounting for whitespace/indentation
-fn assert_tree(s: &str, tree: Tree<Behave>) {
-    // strip and tidy any indent spaces in the expected output so we can easily compare
-    let leading_spaces = s
-        .lines()
-        .find(|line| !line.trim().is_empty() && line.starts_with(' '))
-        .map(|line| line.len() - line.trim_start().len())
-        .unwrap_or(0);
-    let mut expected = s
-        .lines()
-        .map(|line| {
-            if line.len() >= leading_spaces {
-                &line[leading_spaces..]
-            } else {
-                line
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    expected.push('\n');
-    assert_eq!(tree.to_string(), expected);
 }
 
 /// Test BehaveInterrupt with multiple triggers
@@ -470,28 +444,123 @@ fn test_behave_interrupt_multiple() {
     app.add_plugins(BehavePlugin::default());
     app.add_plugins(bevy::log::LogPlugin::default());
     app.init_resource::<TestState>();
-
+    
     app.add_observer(check_health);
     app.add_observer(check_enemy_in_range_multi);
     app.add_observer(on_task_finished_multi);
-
+    
     app.add_systems(
         Startup,
         |mut commands: Commands, mut test_state: ResMut<TestState>| {
             // Set low health to trigger interrupt
             test_state.low_health = true;
             test_state.enemy_in_range = false; // This one should not trigger
-
+            
             let tree = behave! {
                 Behave::spawn_named("Long task with multiple interrupts", (
                     LongRunningTask,
                     BehaveInterrupt::new(CheckHealth).or(CheckEnemyInRange),
                 ))
             };
-
+            
             commands.spawn(BehaveTree::new(tree).with_logging(true));
         },
     );
-
+    
     app.run();
+}
+
+/// Test BehaveInterrupt with inverted trigger (or_not)
+#[test]
+fn test_behave_interrupt_or_not() {
+    use crate::prelude::*;
+    use bevy::prelude::*;
+
+    #[derive(Component, Clone)]
+    struct LongRunningTask;
+
+    #[derive(Clone)]
+    struct CheckAlive;
+
+    #[derive(Resource, Default)]
+    struct TestState {
+        is_alive: bool,
+        task_interrupted: bool,
+    }
+
+    // This trigger returns success when alive
+    fn check_alive(
+        trigger: Trigger<BehaveTrigger<CheckAlive>>,
+        test_state: Res<TestState>,
+        mut commands: Commands,
+    ) {
+        info!("Checking if alive: {}", test_state.is_alive);
+        if test_state.is_alive {
+            commands.trigger(trigger.ctx().success()); // Returns success when alive
+        } else {
+            commands.trigger(trigger.ctx().failure()); // Returns failure when dead
+        }
+    }
+
+    fn on_task_finished_or_not(
+        _trigger: Trigger<OnAdd, BehaveFinished>,
+        mut test_state: ResMut<TestState>,
+        mut exit: EventWriter<AppExit>,
+    ) {
+        test_state.task_interrupted = true;
+        info!("Task was interrupted because entity died!");
+        exit.write(AppExit::Success);
+    }
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(BehavePlugin::default());
+    app.add_plugins(bevy::log::LogPlugin::default());
+    app.init_resource::<TestState>();
+    
+    app.add_observer(check_alive);
+    app.add_observer(on_task_finished_or_not);
+    
+    app.add_systems(
+        Startup,
+        |mut commands: Commands, mut test_state: ResMut<TestState>| {
+            // Entity is dead (not alive), so CheckAlive returns failure
+            // or_not inverts failure to success, so interrupt triggers
+            test_state.is_alive = false;
+            
+            let tree = behave! {
+                Behave::spawn_named("Long task with inverted interrupt", (
+                    LongRunningTask,
+                    BehaveInterrupt::new(CheckAlive).or_not(CheckAlive),
+                ))
+            };
+            
+            commands.spawn(BehaveTree::new(tree).with_logging(true));
+        },
+    );
+    
+    app.run();
+}
+
+/// asserts the tree.to_string matches the expected string, accounting for whitespace/indentation
+fn assert_tree(s: &str, tree: Tree<Behave>) {
+    // strip and tidy any indent spaces in the expected output so we can easily compare
+    let leading_spaces = s
+        .lines()
+        .find(|line| !line.trim().is_empty() && line.starts_with(' '))
+        .map(|line| line.len() - line.trim_start().len())
+        .unwrap_or(0);
+    let mut expected = s
+        .lines()
+        .map(|line| {
+            if line.len() >= leading_spaces {
+                &line[leading_spaces..]
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    expected.push('\n');
+    assert_eq!(tree.to_string(), expected);
 }
