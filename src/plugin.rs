@@ -476,35 +476,49 @@ fn tick_timeout_components(
 /// Will interrupt and report success if any trigger reports success
 #[derive(Component, Debug, Clone)]
 pub struct BehaveInterrupt {
-    triggers: Vec<(DynamicTrigger, bool)>, // (trigger, should_invert)
+    triggers: Vec<(DynamicTrigger, bool, &'static str)>,
 }
 
 impl BehaveInterrupt {
     /// Creates a new BehaveInterrupt which will check the given trigger every frame.
     /// If the trigger reports success, the interrupted node will report success.
     pub fn new<T: Clone + Send + Sync + 'static>(trigger: T) -> Self {
-        Self {
-            triggers: vec![(DynamicTrigger::new(trigger), false)],
-        }
+        let mut interrupt = Self {
+            triggers: Vec::new(),
+        };
+        interrupt.add_trigger(trigger, false);
+        interrupt
     }
 
     /// Adds another trigger to check. If any trigger reports success, the interrupted node will report success.
     pub fn or<T: Clone + Send + Sync + 'static>(mut self, trigger: T) -> Self {
-        self.triggers.push((DynamicTrigger::new(trigger), false));
+        self.add_trigger(trigger, false);
         self
     }
 
     /// Adds another trigger to check with inverted result. If the trigger reports failure (inverted to success), the interrupted node will report success.
     pub fn or_not<T: Clone + Send + Sync + 'static>(mut self, trigger: T) -> Self {
-        self.triggers.push((DynamicTrigger::new(trigger), true));
+        self.add_trigger(trigger, true);
         self
+    }
+
+    fn add_trigger<T>(&mut self, trigger: T, invert: bool)
+    where
+        T: Clone + Send + Sync + 'static,
+    {
+        let name = std::any::type_name::<T>()
+            .rsplit("::")
+            .next()
+            .unwrap_or("Unknown");
+        self.triggers
+            .push((DynamicTrigger::new(trigger), invert, name));
     }
 }
 
 #[derive(Resource, Default)]
 struct InterruptState {
-    /// Maps temp entities to their original contexts and inversion flag for cleanup
-    pending_interrupts: HashMap<Entity, (BehaveCtx, bool)>, // (context, should_invert)
+    /// Maps temp entities to their original contexts, inversion flag, and trigger name for cleanup
+    pending_interrupts: HashMap<Entity, (BehaveCtx, bool, &'static str)>, // (context, should_invert, trigger_name)
     /// Entities that have been processed this frame (cleared each frame)
     processed_this_frame: HashSet<Entity>,
 }
@@ -514,30 +528,24 @@ fn tick_interrupt_components(
     mut interrupt_state: ResMut<InterruptState>,
     mut commands: Commands,
 ) {
-    // Clear the processed set at the start of each frame
     interrupt_state.processed_this_frame.clear();
 
     for (entity, interrupt, ctx) in q.iter() {
-        // Only process each interrupt entity once per frame
         if interrupt_state.processed_this_frame.insert(entity) {
-            // Check each trigger
-            for (trigger, should_invert) in &interrupt.triggers {
-                // Create a unique temporary entity to track this interrupt check
+            for (trigger, should_invert, trigger_name) in &interrupt.triggers {
                 let temp_entity = commands.spawn_empty().id();
 
-                // Store the mapping for cleanup with inversion flag
                 interrupt_state
                     .pending_interrupts
-                    .insert(temp_entity, (*ctx, *should_invert));
+                    .insert(temp_entity, (*ctx, *should_invert, trigger_name));
 
-                // Create a context for the interrupt trigger as a proper trigger context
                 let interrupt_ctx = BehaveCtx::new_for_trigger(
                     ctx.task_node(),
                     &TickCtx {
-                        bt_entity: temp_entity, // Use temp entity as the "tree" for this interrupt check
+                        bt_entity: temp_entity,
                         target_entity: ctx.target_entity(),
                         supervisor_entity: ctx.supervisor_entity(),
-                        elapsed_secs: 0.0, // Not used for immediate triggers
+                        elapsed_secs: 0.0,
                         logging: false,
                     },
                 );
@@ -553,27 +561,33 @@ fn handle_interrupt_responses(
     trigger: Trigger<BehaveStatusReport>,
     mut interrupt_state: ResMut<InterruptState>,
     mut commands: Commands,
+    q_trees: Query<&BehaveTree>,
 ) {
     let response_ctx = trigger.event().ctx();
-    let temp_entity = response_ctx.behave_entity(); // This is the temp entity we used as bt_entity
+    let temp_entity = response_ctx.behave_entity();
 
-    // Check if this response is for one of our pending interrupts
-    if let Some((original_ctx, should_invert)) =
+    if let Some((original_ctx, should_invert, trigger_name)) =
         interrupt_state.pending_interrupts.remove(&temp_entity)
     {
-        // Clean up the temporary entity
         commands.entity(temp_entity).despawn();
 
-        // Apply inversion if needed and check for success
         let trigger_succeeded = matches!(trigger.event(), BehaveStatusReport::Success(_));
         let should_interrupt = if should_invert {
-            !trigger_succeeded // Invert the result
+            !trigger_succeeded
         } else {
-            trigger_succeeded // Use original result
+            trigger_succeeded
         };
 
-        // Only interrupt the main behavior if the (possibly inverted) trigger reported success
         if should_interrupt {
+            if let Ok(tree) = q_trees.get(original_ctx.behave_entity()) {
+                if tree.logging {
+                    let inversion_info = if should_invert { " (inverted)" } else { "" };
+                    info!(
+                        "🛑 Behavior interrupted by trigger: {}{}",
+                        trigger_name, inversion_info
+                    );
+                }
+            }
             commands.trigger(original_ctx.success());
         }
     }
