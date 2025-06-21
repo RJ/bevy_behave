@@ -312,6 +312,78 @@ fn run_frame_delays(sync: bool, expected_final_frame: u32) {
     app.run();
 }
 
+/// Test BehaveInterrupt
+#[test]
+fn test_behave_interrupt() {
+    use crate::prelude::*;
+    use bevy::prelude::*;
+
+    #[derive(Component, Clone)]
+    struct LongRunningTask;
+
+    #[derive(Clone)]
+    struct CheckHasEnemyInRange;
+
+    #[derive(Resource, Default)]
+    struct TestState {
+        enemy_in_range: bool,
+        task_interrupted: bool,
+    }
+
+    // The interrupt condition checker
+    fn check_enemy_in_range(
+        trigger: Trigger<BehaveTrigger<CheckHasEnemyInRange>>,
+        test_state: Res<TestState>,
+        mut commands: Commands,
+    ) {
+        info!("Checking for enemy in range: {}", test_state.enemy_in_range);
+        if test_state.enemy_in_range {
+            commands.trigger(trigger.ctx().success());
+        } else {
+            commands.trigger(trigger.ctx().failure());
+        }
+    }
+
+    // Observer to track when the main task gets interrupted
+    fn on_task_finished(
+        _trigger: Trigger<OnAdd, BehaveFinished>,
+        mut test_state: ResMut<TestState>,
+        mut exit: EventWriter<AppExit>,
+    ) {
+        test_state.task_interrupted = true;
+        info!("Task was interrupted successfully!");
+        exit.write(AppExit::Success);
+    }
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(BehavePlugin::default());
+    app.add_plugins(bevy::log::LogPlugin::default());
+    app.init_resource::<TestState>();
+
+    app.add_observer(check_enemy_in_range);
+    app.add_observer(on_task_finished);
+
+    app.add_systems(
+        Startup,
+        |mut commands: Commands, mut test_state: ResMut<TestState>| {
+            // Set enemy in range after a few frames
+            test_state.enemy_in_range = true;
+
+            let tree = behave! {
+                Behave::spawn_named("Long task with interrupt", (
+                    LongRunningTask,
+                    BehaveInterrupt::new(CheckHasEnemyInRange),
+                ))
+            };
+
+            commands.spawn(BehaveTree::new(tree).with_logging(true));
+        },
+    );
+
+    app.run();
+}
+
 /// asserts the tree.to_string matches the expected string, accounting for whitespace/indentation
 fn assert_tree(s: &str, tree: Tree<Behave>) {
     // strip and tidy any indent spaces in the expected output so we can easily compare
