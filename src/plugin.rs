@@ -474,19 +474,27 @@ fn tick_timeout_components(
 }
 
 /// Will interrupt and report success if any trigger reports success
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Default)]
 pub struct BehaveInterrupt {
     triggers: Vec<(DynamicTrigger, bool, &'static str)>,
 }
 
 impl BehaveInterrupt {
     /// Creates a new BehaveInterrupt which will check the given trigger every frame.
-    /// If the trigger reports success, the interrupted node will report success.
+    /// If the trigger reports success, the interrupted node will report success and be interrupted.
+    /// If the trigger reports failure nothing happens.
     pub fn new<T: Clone + Send + Sync + 'static>(trigger: T) -> Self {
-        let mut interrupt = Self {
-            triggers: Vec::new(),
-        };
+        let mut interrupt = Self::default();
         interrupt.add_trigger(trigger, false);
+        interrupt
+    }
+
+    /// Creates a new BehaveInterrupt which will check the given trigger with inverted result every frame.
+    /// If the trigger reports success, the interrupted node will report success and be interrupted.
+    /// If the trigger reports failure nothing happens.
+    pub fn new_not<T: Clone + Send + Sync + 'static>(trigger: T) -> Self {
+        let mut interrupt = Self::default();
+        interrupt.add_trigger(trigger, true);
         interrupt
     }
 
