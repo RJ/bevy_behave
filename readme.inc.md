@@ -493,7 +493,24 @@ let tree = behave! {
 
 This will get the `BehaveCtx` from the entity, and trigger a success or failure report for you after the timeout.
 
+#### Interrupting nodes
 
+To trigger a status report on a dynamic spawn task based on a trigger node, use the `BehaveInterrupt` helper component:
+
+```rust
+let tree = behave! {
+    Behave::Sequence => {
+        Behave::spawn_named("Mining with interrupts", (
+            MiningTask,
+            BehaveInterrupt::by(CheckEnemyNearby).or_not(CheckPlayerHealthy),
+        )),
+    }
+};
+```
+
+See the [interrupt example](https://github.com/RJ/bevy_behave/blob/main/examples/interrupt_example.rs) for a complete demonstration of how to interrupt a dynamic spawn task.
+
+Interrupting a dynamic spawn task will stop the current execution and return `success` for the interrupted node.
 
 ## `behave!` macro
 
