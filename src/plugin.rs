@@ -1,8 +1,12 @@
 use crate::{
-    BehaveNode, BehaveNodeStatus, EntityTaskStatus, TriggerTaskStatus, prelude::*, tick_node,
+    BehaveNode, BehaveNodeStatus, EntityTaskStatus, TriggerTaskStatus,
+    behave_trigger::{DynamicTrigger, DynamicTriggerCommand},
+    prelude::*,
+    tick_node,
 };
 use bevy::ecs::system::SystemState;
 use bevy::prelude::*;
+use std::collections::{HashMap, HashSet};
 // use bevy::app::FixedPreUpdate;
 use bevy::ecs::intern::Interned;
 use bevy::ecs::schedule::{ScheduleLabel, SystemSet};
@@ -53,8 +57,12 @@ impl Plugin for BehavePlugin {
     fn build(&self, app: &mut App) {
         app.configure_sets(self.schedule, BehaveSet);
         app.register_type::<BehaveTimeout>();
+        app.init_resource::<InterruptState>();
 
-        app.add_systems(self.schedule, tick_timeout_components.in_set(BehaveSet));
+        app.add_systems(
+            self.schedule,
+            (tick_timeout_components, tick_interrupt_components).in_set(BehaveSet),
+        );
 
         if self.synchronous {
             warn!("Using experimental synchronous tree ticking");
@@ -72,6 +80,7 @@ impl Plugin for BehavePlugin {
         }
 
         app.add_observer(on_tick_timeout_added);
+        app.add_observer(handle_interrupt_responses);
         // adds a global observer to listen for status report events
         app.add_plugins(crate::ctx::plugin);
     }
@@ -460,6 +469,160 @@ fn tick_timeout_components(
             } else {
                 commands.trigger(ctx.failure());
             }
+        }
+    }
+}
+
+/// Will interrupt and report success if any trigger reports success
+#[derive(Component, Debug, Clone, Default)]
+pub struct BehaveInterrupt {
+    triggers: Vec<InterruptTrigger>,
+}
+
+#[derive(Debug, Clone)]
+struct InterruptTrigger {
+    dynamic_trigger: DynamicTrigger,
+    inverted: bool,
+    name: &'static str,
+}
+
+impl BehaveInterrupt {
+    /// Creates a new BehaveInterrupt which will check the given trigger every frame.
+    /// If the trigger reports success, the interrupted node will report success and be interrupted.
+    /// If the trigger reports failure nothing happens.
+    pub fn by<T: Clone + Send + Sync + 'static>(trigger: T) -> Self {
+        let mut interrupt = Self::default();
+        interrupt.add_trigger(trigger, false);
+        interrupt
+    }
+
+    /// Creates a new BehaveInterrupt which will check the given trigger with inverted result every frame.
+    /// If the trigger reports success, the interrupted node will report success and be interrupted.
+    /// If the trigger reports failure nothing happens.
+    pub fn by_not<T: Clone + Send + Sync + 'static>(trigger: T) -> Self {
+        let mut interrupt = Self::default();
+        interrupt.add_trigger(trigger, true);
+        interrupt
+    }
+
+    /// Adds another trigger to check. If any trigger reports success, the interrupted node will report success.
+    pub fn or<T: Clone + Send + Sync + 'static>(mut self, trigger: T) -> Self {
+        self.add_trigger(trigger, false);
+        self
+    }
+
+    /// Adds another trigger to check with inverted result. If the trigger reports failure (inverted to success), the interrupted node will report success.
+    pub fn or_not<T: Clone + Send + Sync + 'static>(mut self, trigger: T) -> Self {
+        self.add_trigger(trigger, true);
+        self
+    }
+
+    fn add_trigger<T>(&mut self, trigger: T, inverted: bool)
+    where
+        T: Clone + Send + Sync + 'static,
+    {
+        let name = std::any::type_name::<T>()
+            .rsplit("::")
+            .next()
+            .unwrap_or("Unknown");
+        self.triggers.push(InterruptTrigger {
+            dynamic_trigger: DynamicTrigger::new(trigger),
+            inverted,
+            name,
+        });
+    }
+}
+
+#[derive(Resource, Default)]
+struct InterruptState {
+    /// Maps temp entities to their original contexts for cleanup, inversion flag, and trigger name
+    pending_interrupts: HashMap<Entity, InterruptContext>,
+    /// Entities that have been processed
+    processed_this_frame: HashSet<Entity>,
+}
+
+struct InterruptContext {
+    ctx: BehaveCtx,
+    inverted: bool,
+    name: &'static str,
+}
+
+fn tick_interrupt_components(
+    q: Query<(Entity, &BehaveInterrupt, &BehaveCtx)>,
+    mut interrupt_state: ResMut<InterruptState>,
+    mut commands: Commands,
+) {
+    interrupt_state.processed_this_frame.clear();
+
+    for (entity, interrupt, ctx) in q.iter() {
+        if interrupt_state.processed_this_frame.insert(entity) {
+            for InterruptTrigger {
+                dynamic_trigger,
+                inverted,
+                name,
+            } in &interrupt.triggers
+            {
+                let temp_entity = commands.spawn_empty().id();
+
+                interrupt_state.pending_interrupts.insert(
+                    temp_entity,
+                    InterruptContext {
+                        ctx: *ctx,
+                        inverted: *inverted,
+                        name,
+                    },
+                );
+
+                let interrupt_ctx = BehaveCtx::new_for_trigger(
+                    ctx.task_node(),
+                    &TickCtx {
+                        bt_entity: temp_entity,
+                        target_entity: ctx.target_entity(),
+                        supervisor_entity: ctx.supervisor_entity(),
+                        elapsed_secs: 0.0,
+                        logging: false,
+                    },
+                );
+
+                commands.dyn_trigger(dynamic_trigger.clone(), interrupt_ctx);
+            }
+        }
+    }
+}
+
+/// System to handle interrupt trigger responses
+fn handle_interrupt_responses(
+    trigger: Trigger<BehaveStatusReport>,
+    mut interrupt_state: ResMut<InterruptState>,
+    mut commands: Commands,
+    q_trees: Query<&BehaveTree>,
+) {
+    let response_ctx = trigger.event().ctx();
+    let temp_entity = response_ctx.behave_entity();
+
+    if let Some(InterruptContext {
+        ctx: original_ctx,
+        inverted,
+        name,
+    }) = interrupt_state.pending_interrupts.remove(&temp_entity)
+    {
+        commands.entity(temp_entity).despawn();
+
+        let trigger_succeeded = matches!(trigger.event(), BehaveStatusReport::Success(_));
+        let should_interrupt = if inverted {
+            !trigger_succeeded
+        } else {
+            trigger_succeeded
+        };
+
+        if should_interrupt {
+            if let Ok(tree) = q_trees.get(original_ctx.behave_entity()) {
+                if tree.logging {
+                    let inversion_info = if inverted { " (inverted)" } else { "" };
+                    info!("🛑 Interrupted by: {}{}", name, inversion_info);
+                }
+            }
+            commands.trigger(original_ctx.success());
         }
     }
 }
