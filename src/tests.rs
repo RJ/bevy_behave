@@ -312,6 +312,152 @@ fn run_frame_delays(sync: bool, expected_final_frame: u32) {
     app.run();
 }
 
+/// Test that BehaveInterrupt works as expected
+#[test]
+fn test_behave_interrupt() {
+    use crate::prelude::*;
+    use bevy::prelude::*;
+
+    #[derive(Component, Clone)]
+    struct LongRunningTask;
+
+    #[derive(Clone)]
+    struct CheckInterrupt;
+
+    #[derive(Resource, Default)]
+    struct TestState {
+        interrupt: bool,
+    }
+
+    fn check_interrupt(
+        trigger: Trigger<BehaveTrigger<CheckInterrupt>>,
+        test_state: Res<TestState>,
+        mut commands: Commands,
+    ) {
+        if test_state.interrupt {
+            commands.trigger(trigger.ctx().success());
+        } else {
+            commands.trigger(trigger.ctx().failure());
+        }
+    }
+
+    fn on_task_finished(
+        trigger: Trigger<OnAdd, BehaveFinished>,
+        query: Query<&BehaveFinished>,
+        mut exit: EventWriter<AppExit>,
+    ) {
+        let finished = query.get(trigger.target()).unwrap();
+        let result = finished.0;
+        assert!(result, "long task was not interrupted.");
+        exit.write(AppExit::Success);
+    }
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(BehavePlugin::default());
+    app.add_plugins(bevy::log::LogPlugin::default());
+    app.init_resource::<TestState>();
+
+    app.add_observer(check_interrupt);
+    app.add_observer(on_task_finished);
+
+    app.add_systems(
+        Startup,
+        |mut commands: Commands, mut test_state: ResMut<TestState>| {
+            test_state.interrupt = true;
+
+            let tree = behave! {
+                Behave::spawn_named("Long task with interrupt", (
+                    LongRunningTask,
+                    BehaveInterrupt::by(CheckInterrupt),
+                    BehaveTimeout::from_secs(1., false)
+                ))
+            };
+
+            commands.spawn(BehaveTree::new(tree).with_logging(true));
+        },
+    );
+
+    app.run();
+}
+
+/// Test BehaveInterrupt with multiple triggers
+#[test]
+fn test_behave_interrupt_inverted() {
+    use crate::prelude::*;
+    use bevy::prelude::*;
+
+    #[derive(Component, Clone)]
+    struct LongRunningTask;
+
+    #[derive(Clone)]
+    struct CheckInterrupt;
+
+    #[derive(Clone)]
+    struct CheckSecondInterrupt;
+
+    #[derive(Resource, Default)]
+    struct TestState {
+        interrupt: bool,
+    }
+
+    fn check_interrupt(trigger: Trigger<BehaveTrigger<CheckInterrupt>>, mut commands: Commands) {
+        commands.trigger(trigger.ctx().failure());
+    }
+
+    fn check_second_interrupt(
+        trigger: Trigger<BehaveTrigger<CheckSecondInterrupt>>,
+        test_state: Res<TestState>,
+        mut commands: Commands,
+    ) {
+        if test_state.interrupt {
+            commands.trigger(trigger.ctx().failure());
+        } else {
+            commands.trigger(trigger.ctx().success());
+        }
+    }
+
+    fn on_task_finished(
+        trigger: Trigger<OnAdd, BehaveFinished>,
+        query: Query<&BehaveFinished>,
+        mut exit: EventWriter<AppExit>,
+    ) {
+        let finished = query.get(trigger.target()).unwrap();
+        let result = finished.0;
+        assert!(result, "long task was not interrupted.");
+        exit.write(AppExit::Success);
+    }
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(BehavePlugin::default());
+    app.add_plugins(bevy::log::LogPlugin::default());
+    app.init_resource::<TestState>();
+
+    app.add_observer(check_interrupt);
+    app.add_observer(check_second_interrupt);
+    app.add_observer(on_task_finished);
+
+    app.add_systems(
+        Startup,
+        |mut commands: Commands, mut test_state: ResMut<TestState>| {
+            test_state.interrupt = true;
+
+            let tree = behave! {
+                Behave::spawn_named("Long task with multiple interrupts", (
+                    LongRunningTask,
+                    BehaveInterrupt::by(CheckInterrupt).or_not(CheckSecondInterrupt),
+                    BehaveTimeout::from_secs(1., false)
+                ))
+            };
+
+            commands.spawn(BehaveTree::new(tree).with_logging(true));
+        },
+    );
+
+    app.run();
+}
+
 /// asserts the tree.to_string matches the expected string, accounting for whitespace/indentation
 fn assert_tree(s: &str, tree: Tree<Behave>) {
     // strip and tidy any indent spaces in the expected output so we can easily compare
