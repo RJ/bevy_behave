@@ -526,6 +526,7 @@ https://github.com/user-attachments/assets/ef4f0539-0b4d-4d57-9516-a39783de140f
 
 | bevy_behave | bevy |
 | ----------- | ---- |
+| 0.5         | 0.18 |
 | 0.4         | 0.17 |
 | 0.3         | 0.16 |
 | 0.2.2       | 0.15 |

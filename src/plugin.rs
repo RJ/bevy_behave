@@ -8,6 +8,8 @@ use bevy::ecs::intern::Interned;
 use bevy::ecs::schedule::{ScheduleLabel, SystemSet};
 use ego_tree::*;
 
+use crate::ctx::BehaveDespawnTaskEntity;
+
 /// The `BehaveTree` components are ticked in this set, which is configured into the schedule
 /// provided to the `BehavePlugin`. This defaults to `FixedPreUpdate`.
 #[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
@@ -54,6 +56,13 @@ impl Plugin for BehavePlugin {
         app.configure_sets(self.schedule, BehaveSet);
         app.register_type::<BehaveTimeout>();
 
+        // Clean up any task entities that completed on a prior tick.
+        // (We deliberately defer despawn to avoid command-application ordering issues.)
+        app.add_systems(
+            self.schedule,
+            despawn_completed_task_entities.in_set(BehaveSet),
+        );
+
         app.add_systems(self.schedule, tick_timeout_components.in_set(BehaveSet));
 
         if self.synchronous {
@@ -74,6 +83,15 @@ impl Plugin for BehavePlugin {
         app.add_observer(on_tick_timeout_added);
         // adds a global observer to listen for status report events
         app.add_plugins(crate::ctx::plugin);
+    }
+}
+
+fn despawn_completed_task_entities(
+    q: Query<Entity, Added<BehaveDespawnTaskEntity>>,
+    mut commands: Commands,
+) {
+    for e in q.iter() {
+        commands.entity(e).try_despawn();
     }
 }
 

@@ -6,6 +6,13 @@ pub(crate) fn plugin(app: &mut App) {
     app.add_observer(on_behave_status_report);
 }
 
+/// Marker component: entities tagged with this will be despawned by the plugin on a later tick.
+///
+/// This avoids despawning an entity in the same command-application flush where other commands
+/// (e.g. required-component insertions) may still target that entity.
+#[derive(Component)]
+pub(crate) struct BehaveDespawnTaskEntity;
+
 /// Provided to the user's bevy system or observer fn, so they have a way to report status
 /// back to the tree, and to look up the target entity etc.
 #[derive(Component, Debug, Copy, Clone)]
@@ -166,6 +173,8 @@ fn on_behave_status_report(
     // despawn the entity used for this task now that it is complete.
     // if this was a TriggerReq task, there won't be a task entity.
     if let Some(task_entity) = task_entity {
-        commands.entity(task_entity).try_despawn();
+        // Defer despawn to a later tick to avoid conflicts with command application ordering
+        // (notably required-component insertions for just-added components).
+        commands.entity(task_entity).insert(BehaveDespawnTaskEntity);
     }
 }

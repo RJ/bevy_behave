@@ -1,6 +1,6 @@
 [package]
 name = "bevy_behave"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 description = "A behaviour tree plugin for bevy with dynamic spawning."
 repository = "https://github.com/RJ/bevy_behave"
@@ -10,13 +10,13 @@ license = "MIT OR Apache-2.0"
 authors = ["Richard Jones <rj@metabrew.com>"]
 
 [dependencies]
-bevy = {version = "0.17", default-features = false, features = ["bevy_log"]}
+bevy = {version = "0.18", default-features = false, features = ["bevy_log"]}
 dyn-clone = "1.0.18"
 ego-tree = "0.10.0"
 
 [dev-dependencies]
-bevy = {version = "0.17", default-features = true}
-bevy_pancam = "0.19"
+bevy = {version = "0.18", default-features = true}
+bevy_pancam = "0.20"
 rand = "0.9.0"
 
 
