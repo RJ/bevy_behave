@@ -66,9 +66,6 @@ const HELP_MSG: &str = "Arrows = move\nShift+Arrows = move fast\nMouse/Scroll = 
 fn init(mut commands: Commands) {
     commands.spawn((
         Camera2d,
-        // enable HDR and bloom so we can make out player pop a bit,
-        // which makes it easier to see if you are swarmed by 10,000 enemies at once.
-        Hdr,
         bevy::core_pipeline::tonemapping::Tonemapping::TonyMcMapface,
         Bloom::default(),
         PanCam {

@@ -312,6 +312,297 @@ fn run_frame_delays(sync: bool, expected_final_frame: u32) {
     app.run();
 }
 
+#[test]
+fn test_when_all_all_succeed() {
+    use crate::prelude::*;
+    use bevy::prelude::*;
+
+    #[derive(Event, Clone)]
+    struct A;
+    #[derive(Event, Clone)]
+    struct B;
+    #[derive(Event, Clone)]
+    struct C;
+
+    fn on_a(trigger: On<BehaveTrigger<A>>, mut cmd: Commands) {
+        cmd.trigger(trigger.ctx().success());
+    }
+    fn on_b(trigger: On<BehaveTrigger<B>>, mut cmd: Commands) {
+        cmd.trigger(trigger.ctx().success());
+    }
+    fn on_c(trigger: On<BehaveTrigger<C>>, mut cmd: Commands) {
+        cmd.trigger(trigger.ctx().success());
+    }
+
+    let mut app = App::new();
+    app.add_plugins((
+        BehavePlugin::default().with_synchronous(),
+        MinimalPlugins,
+        bevy::log::LogPlugin::default(),
+    ))
+    .add_observer(on_a)
+    .add_observer(on_b)
+    .add_observer(on_c)
+    .add_systems(Startup, |mut cmd: Commands| {
+        let tree = behave! {
+            Behave::WhenAll => {
+                Behave::trigger(A),
+                Behave::trigger(B),
+                Behave::trigger(C),
+            }
+        };
+        cmd.spawn(BehaveTree::new(tree));
+    })
+    .add_observer(
+        |t: On<Add, BehaveFinished>,
+         q: Query<&BehaveFinished>,
+         mut exit: MessageWriter<AppExit>| {
+            let f = q.get(t.event().entity).unwrap();
+            assert!(f.0, "WhenAll should succeed when all children succeed");
+            exit.write(AppExit::Success);
+        },
+    );
+    app.run();
+}
+
+#[test]
+fn test_when_all_one_fails() {
+    use crate::prelude::*;
+    use bevy::prelude::*;
+
+    #[derive(Event, Clone)]
+    struct A;
+    #[derive(Event, Clone)]
+    struct B;
+    #[derive(Event, Clone)]
+    struct Bad;
+
+    fn on_a(trigger: On<BehaveTrigger<A>>, mut cmd: Commands) {
+        cmd.trigger(trigger.ctx().success());
+    }
+    fn on_b(trigger: On<BehaveTrigger<B>>, mut cmd: Commands) {
+        cmd.trigger(trigger.ctx().success());
+    }
+    fn on_bad(trigger: On<BehaveTrigger<Bad>>, mut cmd: Commands) {
+        cmd.trigger(trigger.ctx().failure());
+    }
+
+    let mut app = App::new();
+    app.add_plugins((
+        BehavePlugin::default().with_synchronous(),
+        MinimalPlugins,
+        bevy::log::LogPlugin::default(),
+    ))
+    .add_observer(on_a)
+    .add_observer(on_b)
+    .add_observer(on_bad)
+    .add_systems(Startup, |mut cmd: Commands| {
+        let tree = behave! {
+            Behave::WhenAll => {
+                Behave::trigger(A),
+                Behave::trigger(B),
+                Behave::trigger(Bad),
+            }
+        };
+        cmd.spawn(BehaveTree::new(tree));
+    })
+    .add_observer(
+        |t: On<Add, BehaveFinished>,
+         q: Query<&BehaveFinished>,
+         mut exit: MessageWriter<AppExit>| {
+            let f = q.get(t.event().entity).unwrap();
+            assert!(!f.0, "WhenAll should fail when any child fails");
+            exit.write(AppExit::Success);
+        },
+    );
+    app.run();
+}
+
+#[test]
+fn test_when_all_with_wait_nodes() {
+    use crate::prelude::*;
+    use bevy::prelude::*;
+
+    #[derive(Resource, Default)]
+    struct FrameCount(u32);
+
+    fn tick_frame(mut frame: ResMut<FrameCount>) {
+        frame.0 += 1;
+    }
+
+    let mut app = App::new();
+    app.init_resource::<FrameCount>();
+    app.add_plugins((
+        BehavePlugin::default(),
+        MinimalPlugins,
+        bevy::log::LogPlugin::default(),
+    ))
+    .add_systems(PreUpdate, tick_frame.before(BehaveSet))
+    .add_systems(Startup, |mut cmd: Commands| {
+        // Mix of wait nodes: 0.05s and 0.1s. WhenAll should succeed after all timers elapse.
+        let tree = behave! {
+            Behave::WhenAll => {
+                Behave::Wait(0.05),
+                Behave::Wait(0.1),
+            }
+        };
+        cmd.spawn(BehaveTree::new(tree));
+    })
+    .add_observer(
+        |t: On<Add, BehaveFinished>,
+         q: Query<&BehaveFinished>,
+         frame: Res<FrameCount>,
+         mut exit: MessageWriter<AppExit>| {
+            let f = q.get(t.event().entity).unwrap();
+            assert!(f.0, "WhenAll with waits should succeed");
+            info!("WhenAll with waits completed on frame {}", frame.0);
+            exit.write(AppExit::Success);
+        },
+    );
+    app.run();
+}
+
+#[test]
+fn test_when_any_first_succeeds() {
+    use crate::prelude::*;
+    use bevy::prelude::*;
+
+    #[derive(Event, Clone)]
+    struct A;
+    #[derive(Event, Clone)]
+    struct B;
+
+    fn on_a(trigger: On<BehaveTrigger<A>>, mut cmd: Commands) {
+        cmd.trigger(trigger.ctx().success());
+    }
+
+    let mut app = App::new();
+    app.add_plugins((
+        BehavePlugin::default().with_synchronous(),
+        MinimalPlugins,
+        bevy::log::LogPlugin::default(),
+    ))
+    .add_observer(on_a)
+    .add_systems(Startup, |mut cmd: Commands| {
+        let tree = behave! {
+            Behave::WhenAny => {
+                Behave::trigger(A),
+                Behave::trigger(B),
+            }
+        };
+        cmd.spawn(BehaveTree::new(tree));
+    })
+    .add_observer(
+        |t: On<Add, BehaveFinished>,
+         q: Query<&BehaveFinished>,
+         mut exit: MessageWriter<AppExit>| {
+            let f = q.get(t.event().entity).unwrap();
+            assert!(f.0, "WhenAny should succeed when first child succeeds");
+            exit.write(AppExit::Success);
+        },
+    );
+    app.run();
+}
+
+#[test]
+fn test_when_any_all_fail() {
+    use crate::prelude::*;
+    use bevy::prelude::*;
+
+    #[derive(Event, Clone)]
+    struct A;
+    #[derive(Event, Clone)]
+    struct B;
+    #[derive(Event, Clone)]
+    struct C;
+
+    fn on_a(trigger: On<BehaveTrigger<A>>, mut cmd: Commands) {
+        cmd.trigger(trigger.ctx().failure());
+    }
+    fn on_b(trigger: On<BehaveTrigger<B>>, mut cmd: Commands) {
+        cmd.trigger(trigger.ctx().failure());
+    }
+    fn on_c(trigger: On<BehaveTrigger<C>>, mut cmd: Commands) {
+        cmd.trigger(trigger.ctx().failure());
+    }
+
+    let mut app = App::new();
+    app.add_plugins((
+        BehavePlugin::default().with_synchronous(),
+        MinimalPlugins,
+        bevy::log::LogPlugin::default(),
+    ))
+    .add_observer(on_a)
+    .add_observer(on_b)
+    .add_observer(on_c)
+    .add_systems(Startup, |mut cmd: Commands| {
+        let tree = behave! {
+            Behave::WhenAny => {
+                Behave::trigger(A),
+                Behave::trigger(B),
+                Behave::trigger(C),
+            }
+        };
+        cmd.spawn(BehaveTree::new(tree));
+    })
+    .add_observer(
+        |t: On<Add, BehaveFinished>,
+         q: Query<&BehaveFinished>,
+         mut exit: MessageWriter<AppExit>| {
+            let f = q.get(t.event().entity).unwrap();
+            assert!(!f.0, "WhenAny should fail when all children fail");
+            exit.write(AppExit::Success);
+        },
+    );
+    app.run();
+}
+
+#[test]
+fn test_when_any_mixed() {
+    use crate::prelude::*;
+    use bevy::prelude::*;
+
+    #[derive(Event, Clone)]
+    struct Fast;
+    #[derive(Event, Clone)]
+    struct Slow;
+
+    fn on_fast(trigger: On<BehaveTrigger<Fast>>, mut cmd: Commands) {
+        cmd.trigger(trigger.ctx().success());
+    }
+    // Slow intentionally doesn't respond — WhenAny should short-circuit on Fast's success
+
+    let mut app = App::new();
+    app.add_plugins((
+        BehavePlugin::default().with_synchronous(),
+        MinimalPlugins,
+        bevy::log::LogPlugin::default(),
+    ))
+    .add_observer(on_fast)
+    .add_systems(Startup, |mut cmd: Commands| {
+        let tree = behave! {
+            Behave::WhenAny => {
+                Behave::trigger(Fast),
+                Behave::trigger(Slow),
+            }
+        };
+        cmd.spawn(BehaveTree::new(tree));
+    })
+    .add_observer(
+        |t: On<Add, BehaveFinished>,
+         q: Query<&BehaveFinished>,
+         mut exit: MessageWriter<AppExit>| {
+            let f = q.get(t.event().entity).unwrap();
+            assert!(
+                f.0,
+                "WhenAny should succeed when any child succeeds (mixed)"
+            );
+            exit.write(AppExit::Success);
+        },
+    );
+    app.run();
+}
+
 /// asserts the tree.to_string matches the expected string, accounting for whitespace/indentation
 fn assert_tree(s: &str, tree: Tree<Behave>) {
     // strip and tidy any indent spaces in the expected output so we can easily compare

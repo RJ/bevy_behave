@@ -49,8 +49,7 @@ struct CommandWrapper {
 
 impl Command for CommandWrapper {
     type Out = ();
-
-    fn apply(self, world: &mut World) {
+    fn apply(self, world: &mut World) -> Self::Out {
         self.cmd.trig_fn.apply(self.ctx, world);
     }
 }
