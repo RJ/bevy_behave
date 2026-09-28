@@ -15,7 +15,7 @@ No magic is required for the task components, they are are regular bevy componen
 
 When an action node (aka leaf node or task node) in the behaviour tree runs, it will spawn an entity with
 the components you specified in the tree definition. The tree then waits for this entity to
-trigger a status report, at which point the entity will be despawned.
+trigger a status report, after which the entity is despawned on the next tick.
 
 You can also take actions without spawning an entity by triggering an observed `Event`, which can also be used as a conditional in a control node.
 
@@ -332,7 +332,7 @@ let tree = behave! {
 When a `Behave::spawn_named` node runs, a new entity is spawned with the bundle of components you provided along with a
 `BehaveCtx` component, used to get the target entity the tree is controlling, and the mechanism to generate status reports.
 
-Once a result is reported, the entity is despawned.
+Once a result is reported, the entity is despawned on the next tick. Any further reports from it are ignored, so a task system can keep reporting until the entity is gone.
 
 ```rust
 # use bevy_behave::prelude::*;

@@ -154,8 +154,15 @@ fn on_behave_status_report(
     trigger: On<BehaveStatusReport>,
     mut commands: Commands,
     mut q_bt: Query<&mut BehaveTree, Without<BehaveFinished>>,
+    q_tasks: Query<Has<BehaveDespawnTaskEntity>>,
 ) {
     let ctx = trigger.event().ctx();
+    if ctx
+        .task_entity()
+        .is_some_and(|e| q_tasks.get(e).unwrap_or(true))
+    {
+        return;
+    }
     let Ok(mut bt) = q_bt.get_mut(ctx.behave_entity()) else {
         // This is not necessarily an error - the entity could have been legitimately despawned
         // as part of gameplay logic.

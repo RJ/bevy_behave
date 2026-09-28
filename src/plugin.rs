@@ -473,7 +473,7 @@ fn on_tick_timeout_added(
 }
 
 fn tick_timeout_components(
-    q: Query<(&BehaveTimeout, &BehaveCtx)>,
+    q: Query<(&BehaveTimeout, &BehaveCtx), Without<BehaveDespawnTaskEntity>>,
     time: Res<Time>,
     mut commands: Commands,
 ) {

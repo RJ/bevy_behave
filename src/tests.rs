@@ -334,3 +334,74 @@ fn assert_tree(s: &str, tree: Tree<Behave>) {
     expected.push('\n');
     assert_eq!(tree.to_string(), expected);
 }
+
+/// Task entities are despawned a tick after they report. A task system that reports every
+/// frame, or a `BehaveTimeout`, reports again during that tick, and those repeat reports must be
+/// ignored rather than logging a warning.
+#[test]
+fn test_repeat_reports_while_awaiting_despawn_do_not_warn() {
+    use crate::prelude::*;
+    use bevy::ecs::schedule::SingleThreadedExecutor;
+    use bevy::log::tracing::{Event, Level, Subscriber, subscriber};
+    use bevy::log::tracing_subscriber::{Layer, layer::Context, prelude::*, registry};
+    use bevy::prelude::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountWarnings(Arc<AtomicUsize>);
+
+    impl<S: Subscriber> Layer<S> for CountWarnings {
+        fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
+            let meta = event.metadata();
+            if *meta.level() == Level::WARN && meta.target().starts_with("bevy_behave") {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    #[derive(Component, Clone)]
+    struct ReportEveryFrame;
+
+    #[derive(Resource, Default)]
+    struct Spawned(u32);
+
+    fn report_every_frame(q: Query<&BehaveCtx, With<ReportEveryFrame>>, mut commands: Commands) {
+        for ctx in &q {
+            commands.trigger(ctx.success());
+        }
+    }
+
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, BehavePlugin::new(Update)));
+    // keep systems and observers on this thread, so the scoped log subscriber sees their output.
+    app.edit_schedule(Update, |schedule| {
+        schedule.set_executor(SingleThreadedExecutor::new());
+    });
+    app.init_resource::<Spawned>();
+    app.add_systems(Update, report_every_frame);
+    app.add_observer(|_: On<Add, BehaveCtx>, mut spawned: ResMut<Spawned>| {
+        spawned.0 += 1;
+    });
+    app.world_mut().spawn(BehaveTree::new(behave! {
+        Behave::Forever => {
+            Behave::Sequence => {
+                Behave::spawn_named("Reports every frame", ReportEveryFrame),
+                Behave::spawn_named("Times out", BehaveTimeout::from_secs(0.0, true)),
+            }
+        }
+    }));
+
+    let warnings = Arc::new(AtomicUsize::new(0));
+    let subscriber = registry().with(CountWarnings(warnings.clone()));
+    subscriber::with_default(subscriber, || {
+        for _ in 0..20 {
+            app.update();
+        }
+    });
+
+    assert!(
+        app.world().resource::<Spawned>().0 >= 4,
+        "both tasks should have completed at least twice"
+    );
+    assert_eq!(warnings.load(Ordering::Relaxed), 0);
+}

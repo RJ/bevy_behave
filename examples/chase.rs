@@ -435,7 +435,7 @@ fn on_new_behaviour(trigger: On<Add, BehaveCtx>, q: Query<(Entity, Option<&Name>
 // the BehaveStatusReport is what is triggered by your code that calls:
 // commands.trigger(ctx.success()) or commands.trigger(ctx.failure());
 //
-// Right after this trigger is processed, the dynamic entity will be despawned.
+// The dynamic entity is despawned on the tick after this trigger is processed.
 // In the case of a trigger node, the task_entity will be None, since trigger nodes don't spawn.
 #[allow(unused)]
 fn on_status_report(trigger: On<BehaveStatusReport>, q: Query<&Name>) {
