@@ -10,13 +10,13 @@ license = "MIT OR Apache-2.0"
 authors = ["Richard Jones <rj@metabrew.com>"]
 
 [dependencies]
-bevy = { version = "0.19", default-features = false, features = ["bevy_log"] }
+bevy = { version = "0.20", default-features = false, features = ["bevy_log"] }
 dyn-clone = "1.0.18"
 ego-tree = "0.11.0"
 
 [dev-dependencies]
-bevy = { version = "0.19", default-features = true }
-bevy_pancam = "0.21"
+bevy = { version = "0.20", default-features = true }
+bevy_pancam = "0.22"
 rand = "0.10.2"
 
 
