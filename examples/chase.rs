@@ -69,7 +69,7 @@ fn init(mut commands: Commands) {
         // enable HDR and bloom so we can make out player pop a bit,
         // which makes it easier to see if you are swarmed by 10,000 enemies at once.
         Hdr,
-        bevy::core_pipeline::tonemapping::Tonemapping::TonyMcMapface,
+        bevy::render::view::Tonemapping::TonyMcMapface,
         Bloom::default(),
         PanCam {
             move_keys: DirectionKeys::NONE,
@@ -232,7 +232,7 @@ fn wait_system(
 // Note: we aren't replying with a success or failure in OnAdd (although we could), because this
 // component has a `move_system` that runs in FixedUpdate, which does the responding.
 fn onadd_move_towards_player(
-    trigger: On<Add, MoveTowardsPlayer>,
+    trigger: On<Add<MoveTowardsPlayer>>,
     q: Query<&BehaveCtx, With<MoveTowardsPlayer>>,
     mut q_target: Query<&mut Appearance, With<Enemy>>,
 ) {
@@ -246,7 +246,7 @@ fn onadd_move_towards_player(
 }
 
 fn onremove_move_towards_player(
-    trigger: On<Remove, MoveTowardsPlayer>,
+    trigger: On<Remove<MoveTowardsPlayer>>,
     q: Query<&BehaveCtx, With<MoveTowardsPlayer>>,
     mut q_target: Query<&mut Appearance, With<Enemy>>,
 ) {
@@ -425,7 +425,7 @@ fn example_debug_plugin(app: &mut App) {
 // so if you used the _named fn, or included a Name in the bundle, you can log them like this
 // whenever a new entity for a task node is spawned:
 #[allow(unused)]
-fn on_new_behaviour(trigger: On<Add, BehaveCtx>, q: Query<(Entity, Option<&Name>, &BehaveCtx)>) {
+fn on_new_behaviour(trigger: On<Add<BehaveCtx>>, q: Query<(Entity, Option<&Name>, &BehaveCtx)>) {
     if let Ok((entity, name, ctx)) = q.get(trigger.event().entity) {
         info!("New behaviour spawned {entity} {ctx} = {name:?}");
     }
