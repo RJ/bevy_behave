@@ -464,7 +464,7 @@ impl BehaveTimeout {
 }
 
 fn on_tick_timeout_added(
-    t: On<Add, BehaveTimeout>,
+    t: On<Add<BehaveTimeout>>,
     mut q: Query<&mut BehaveTimeout>,
     time: Res<Time>,
 ) {

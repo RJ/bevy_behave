@@ -17,7 +17,7 @@ pub mod prelude {
 }
 
 /// we want to insert the BehaveCtx at the same time as the dynamic bundle, because we want to be
-/// able to write Trigger<OnAdd, BehaveCtx> and see the bundle components on the entity already.
+/// able to write On<Add<BehaveCtx>> and see the bundle components on the entity already.
 fn insert<T: Bundle + Clone>(bundle: T) -> impl DynEntityCommand {
     move |mut entity_world: EntityWorldMut, ctx: Option<BehaveCtx>| {
         let entity = entity_world.id();
